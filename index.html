@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html>
+    <head>
+        <script src="https://simplewebrtc.com/latest-v2.js"></script>
+        <!--script src="https://cdn.temasys.io/adapterjs/0.15.x/adapter.min.js"></script-->
+        <style>
+            #remoteVideos video {
+                height: 150px;
+            }
+            #localVideo {
+                height: 150px;
+            }
+        </style>
+    </head>
+    <body>
+        <video id="localVideo"></video>
+        <div id="remoteVideos"></div>
+    </body>
+    <script type="text/javascript">
+        var webrtc = new SimpleWebRTC({
+            debug: true,
+            localVideoEl: 'localVideo',
+            remoteVideosEl: 'remoteVideos',
+            autoRequestMedia: true,
+            receiveMedia: {
+                offerToReceiveAudio: true,
+                offerToReceiveVideo: true
+            }
+        });
+
+        webrtc.on('readyToCall', function () {
+            webrtc.joinRoom('2f36f758-0db1-4691-a4b6-e30cdc5dd11d');
+        });
+    </script>
+</html>

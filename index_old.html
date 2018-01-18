@@ -1,0 +1,245 @@
+<!DOCTYPE html>
+<html>
+    <head>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/2.0.4/socket.io.js"></script>
+        <style>
+            #remoteVideos video {
+                height: 150px;
+            }
+            #localVideo {
+                height: 150px;
+            }
+            #remoteVideo {
+                height: 150px;
+            }
+        </style>
+    </head>
+    <body>
+        <video id="localVideo"></video>
+        <video id="remoteVideo"></video>
+        <div id="remoteVideos"></div>
+    </body>
+    <script type="text/javascript">
+        'use strict';
+
+        var socket = null;
+
+        self.getUserDevice();
+
+        function setSocket() {
+            socket = io('http://localhost:3000/');
+
+            socket.on('connect', function() {
+                console.log('connection');
+
+                console.log(socket.id);
+                socket.emit("connectionReady", socket.id);
+
+                socket.emit('join', '2f36f758-0db1-4691-a4b6-e30cdc5dd11d', function(error, roomDescription) {
+                    if (error) {
+                        console.log("join error", error);
+                        socket.emit("error", error);
+                    } else {
+
+
+                        var id, client, type, peer, s=0;
+                        for (id in roomDescription.clients) {
+                            client = roomDescription.clients[id];
+                            for (type in client) {
+                                if (client[type]) {
+                                    console.log("client join2: ", client);
+                                }
+                            }
+                            s++;
+                        }
+                        console.log("length", roomDescription.size);
+                        if (s > 0) {
+                            console.log("client sayısı 0'dan büyüktür.");
+                            CreateOfferCommand();
+                        }
+                        console.log(roomDescription);
+                    }
+                });
+            });
+
+            socket.on('message', function(msg) {
+                console.log("getting " + msg.type + " ", msg);
+                switch (msg.type) {
+                    case "offer":
+                        CreateAnswerCommand(msg);
+                        break
+                    case "answer":
+                        SetRemoteSDPCommand(msg);
+                        break
+                    case "candidate":
+                        AddIceCandidateCommand(msg);
+                        break
+                    default:
+                        break
+                }
+            });
+        }
+
+        var pc = null;
+        var localStream = null;
+        var clientID = null;
+
+        function setPeer() {
+            if (pc != null) return;
+            var iceServers = [];
+            iceServers.push({ urls: "stun:stun.l.google.com:19302" });
+            pc = new RTCPeerConnection({ iceServers: iceServers });
+
+            pc.onicecandidate = function(event) {
+                if (event.candidate) {
+                    sigSend("candidate", { "candidate": event.candidate })
+                }
+            }
+
+            pc.onaddstream = function(event) {
+                trace("onaddstream");
+                var video = remoteVideo;
+                video.src = window.URL.createObjectURL(event.stream);
+                video.play();
+            };
+
+            pc.onremovestream = function() {
+                remoteVideo.src = null;
+            };
+
+            pc.addStream(localStream);
+
+        }
+
+        /**
+         * This method sends message to server.
+         */
+
+        function sigSend(type, payload) {
+            console.log("sending " + type, message)
+            var message = {
+                "type": type,
+                "sid": "",
+                "to": clientID || "",
+                "roomType": "video",
+                "payload": payload,
+            }
+            socket.emit('message', message);
+        }
+
+        /**
+         * Commands
+         */
+
+        function CreateOfferCommand() {
+            trace('sendOffer');
+            setPeer();
+            pc.createOffer(function (event) {
+                pc.setLocalDescription(event);
+                
+                trace(event);
+                sigSend("offer", event)
+
+                },
+                function (error) {
+                    trace('Failed to create session description: ' + error.toString());
+                }
+            );
+        }
+
+        function CreateAnswerCommand(data) {
+            console.log('CreateAnswerCommand ', data);
+            setPeer();
+            self.clientID = data.from;
+            trace("ClientID: " + clientID);
+            pc.setRemoteDescription(new RTCSessionDescription(data.payload)).then(
+                function() {
+                    trace('setRemoteDescription complete');
+                },
+                onSetSessionDescriptionError
+            );
+            pc.createAnswer().then(
+                function (event) {
+                    console.log(event);
+
+                    sigSend("answer", event)
+                    pc.setLocalDescription(event).then(
+                        function() {
+                            trace('setLocalDescription complete');
+                        },
+                        onSetSessionDescriptionError
+                    );
+                    
+                },
+                function (error) {
+                    trace('Failed to create session description: ' + error.toString());
+                }
+            );
+        }
+
+        function SetRemoteSDPCommand(data) {
+            console.log('SetRemoteSDPCommand ', data);
+            setPeer();
+            pc = new RTCPeerConnection(iceServers);
+            pc.setRemoteDescription(desc).then(
+                function() {
+                    trace(getName(pc) + ' setRemoteDescription complete');
+                },
+                onSetSessionDescriptionError
+            );
+        }
+
+        function AddIceCandidateCommand(data) {
+            console.log('AddIceCandidateCommand ', data);
+            var candidate = new RTCIceCandidate({
+                sdpMLineIndex: data.payload.candidate.sdpMLineIndex,
+                sdpMid: data.payload.candidate.sdpMid,
+                candidate: data.payload.candidate.candidate
+            });
+            pc.addIceCandidate(candidate);
+        }
+
+        /**
+         * User Media
+         */
+
+        var localVideo = document.getElementById('localVideo');
+        var remoteVideo = document.getElementById('remoteVideo');
+
+        function getUserDevice() {
+            navigator.getMedia = (navigator.getUserMedia || navigator.webkitGetUserMedia || navigator.mozGetUserMedia);
+
+            navigator.getMedia(
+                // constraints
+                {video:true, audio:true},
+
+                // success callback
+                function (mediaStream) {
+                    var video = localVideo;
+                    video.src = window.URL.createObjectURL(mediaStream);
+                    video.play();
+                    localStream = mediaStream;
+                    setSocket();
+                },
+                //handle error
+                function (error) {
+                    trace(error);
+                }
+            )
+        }
+
+        /**
+         * Error Handling
+         */
+
+        function onSetSessionDescriptionError(error) {
+            trace('Failed to set session description: ' + error.toString());
+        }
+
+        function trace(text) {
+            console.log(text);
+        }
+
+
+    </script>
+</html>
